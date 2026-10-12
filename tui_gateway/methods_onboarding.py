@@ -91,8 +91,8 @@ def _active_onboarding_session() -> str | None:
 @method("onboarding.start")
 def _(rid, params: dict) -> dict:
     from agent.onboarding_facts import read_facts
-    from agent.onboarding_flow import Facts
-    from agent.onboarding_record import active_session_id, load, start
+    from agent.onboarding_flow import Facts, SkipAll
+    from agent.onboarding_record import active_session_id, advance, load, start
     from agent.onboarding_text import CHAT_TITLE, opening_prompt
     # Held through the opening submit: two windows pressing start at once get one chat and one opening.
     with _onboarding_start_lock:
@@ -100,7 +100,12 @@ def _(rid, params: dict) -> dict:
             with _profile_db(_ONBOARDING_PROFILE, writer=True) as db:
                 if db is None:
                     return _db_unavailable_error(rid, code=5000)
-                stored = None if params.get("rerun") else active_session_id(db)
+                stored = active_session_id(db)
+                if stored is not None and params.get("rerun"):
+                    # One open run at a time: a rerun ends the one it replaces, so finishing the new
+                    # run closes the install flag and the abandoned chat never reopens.
+                    advance(db, stored, SkipAll())
+                    stored = None
                 created = stored is None
                 if created:
                     facts = read_facts(facts_source=params.get("facts_source") or "local", locale=params.get("locale"))

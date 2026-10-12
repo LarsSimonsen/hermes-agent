@@ -213,3 +213,15 @@ def test_an_old_ended_chat_never_closes_the_flag_of_a_newer_run(root):
     onboarding_record.advance(db, "old", SkipAll())  # the old chat's agent still carries setup_beat
     assert read_user_config_raw(root / "config.yaml")["onboarding"]["run"] is True
     assert onboarding_record.active_session_id(db) == "new"
+
+
+def test_a_rerun_ends_the_run_it_replaces_so_finishing_the_new_one_closes_the_flag(client, root):
+    from hermes_cli.config import read_user_config_raw
+    old = _call("onboarding.start")["result"]["stored_session_id"]
+    new = _call("onboarding.start", {"rerun": True})["result"]["stored_session_id"]
+    db = server._get_db()
+
+    assert onboarding_record.load(db, old)["phase"] == "skipped"
+    onboarding_record.advance(db, new, SkipAll())
+    assert onboarding_record.active_session_id(db) is None
+    assert read_user_config_raw(root / "config.yaml")["onboarding"]["run"] is False
