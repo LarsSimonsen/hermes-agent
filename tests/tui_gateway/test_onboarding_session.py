@@ -199,3 +199,17 @@ def test_a_skip_retried_after_a_failed_config_write_closes_the_install_flag(root
     assert read_user_config_raw(root / "config.yaml")["onboarding"]["run"] is True
     onboarding_record.advance(db, "onb", SkipAll())
     assert read_user_config_raw(root / "config.yaml")["onboarding"]["run"] is False
+
+
+def test_an_old_ended_chat_never_closes_the_flag_of_a_newer_run(root):
+    from hermes_cli.config import read_user_config_raw
+    db = server._get_db()
+    db.create_session("old", "desktop")
+    onboarding_record.start(db, "old", FACTS)
+    onboarding_record.advance(db, "old", SkipAll())
+    db.create_session("new", "desktop")
+    onboarding_record.start(db, "new", FACTS)
+
+    onboarding_record.advance(db, "old", SkipAll())  # the old chat's agent still carries setup_beat
+    assert read_user_config_raw(root / "config.yaml")["onboarding"]["run"] is True
+    assert onboarding_record.active_session_id(db) == "new"
