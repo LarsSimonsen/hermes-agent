@@ -179,7 +179,7 @@ _COMPRESSOR_ATTEMPT_STATE_FIELDS = (
     "_ineffective_compression_count", "_anti_thrash_recovery_deadline", "_fallback_compression_streak",
     "_verify_compaction_cleared_threshold", "_last_compression_made_progress", "_summary_failure_cooldown_until",
     "_cooldown_persist_failed", "_last_summary_error", "_consecutive_timeout_failures", "_consecutive_truncation_failures",
-    "_last_summary_dropped_count",
+    "_last_summary_dropped_count", "_ineffective_growth_probe_pending",
     "_last_summary_fallback_used", "_last_compress_aborted", "_last_summary_auth_failure",
     "_last_summary_network_failure", "_last_summary_empty_content_failure", "_last_summary_truncated_failure",
     "_last_summary_overload_failure", "_consecutive_overload_aborts", "_last_summary_overload_degraded",

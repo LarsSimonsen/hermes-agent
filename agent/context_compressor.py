@@ -2295,6 +2295,7 @@ class ContextCompressor(
         self._last_compression_savings_pct = 100.0
         self._ineffective_compression_count = 0
         self._ineffective_growth_tokens = 0
+        self._ineffective_growth_probe_pending = False
         self._ineffective_overflow_probe_used = False
         # Wall-clock probe deadline; 0.0 = unarmed (durable copy re-read via _load_anti_thrash_recovery_deadline).
         self._anti_thrash_recovery_deadline = self._structural_no_op_backoff_until = 0.0
@@ -2493,6 +2494,7 @@ class ContextCompressor(
         """Set the anti-thrash strike counter; persists only on change."""
         if count == 0:
             self._ineffective_growth_tokens = 0
+            self._ineffective_growth_probe_pending = False
             self._ineffective_overflow_probe_used = False
         if count == self._ineffective_compression_count:
             return
