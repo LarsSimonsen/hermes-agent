@@ -2296,6 +2296,7 @@ class ContextCompressor(
         self._ineffective_compression_count = 0
         # Wall-clock probe deadline; 0.0 = unarmed (durable copy re-read via _load_anti_thrash_recovery_deadline).
         self._anti_thrash_recovery_deadline = self._structural_no_op_backoff_until = 0.0
+        self._structural_no_op_tokens = 0
         # Observability only; never feeds the strike latch or the fallback streak.
         self._prellm_skip_count = 0
         # Only a healthy completed summary resets this; ordinary fitting responses do not.
@@ -2329,6 +2330,7 @@ class ContextCompressor(
         self._consecutive_overload_aborts = 0
         self._ineffective_compression_count = self._prellm_skip_count = 0
         self._anti_thrash_recovery_deadline = self._structural_no_op_backoff_until = self._fallback_probe_at = 0.0
+        self._structural_no_op_tokens = 0
         self._reset_proactive_prune_rearm()
         self.get_active_compression_failure_cooldown()
         self._load_fallback_compression_streak()
@@ -2495,15 +2497,9 @@ class ContextCompressor(
         self._persist_ineffective_compression_count()
 
     def _record_structural_no_op(self, reason: str) -> None:
-        """Defer retries after a structural no-op WITHOUT striking the anti-thrash breaker.
-        Nothing eligible existed, so nothing was "ineffective"; striking would permanently disarm
-        auto-compaction on short sessions. The backoff still stops per-turn re-scans."""
-        self._structural_no_op_backoff_until = time.monotonic() + self._STRUCTURAL_NO_OP_BACKOFF_SECONDS
-        if not self.quiet_mode:
-            logger.warning(
-                "Compression skipped (%s): retrying in %.0fs (structural no-op backoff)", reason,
-                self._STRUCTURAL_NO_OP_BACKOFF_SECONDS,
-            )
+        """Defer until time or context growth makes another structural probe useful."""
+        from agent.compression_backoff import record_structural_no_op
+        record_structural_no_op(self, reason)
 
     def record_rejected_compaction(self) -> None:
         """One ineffective strike for a pre-commit rejection; no real-usage arming or streak change (nothing committed)."""
@@ -3002,6 +2998,8 @@ class ContextCompressor(
         tokens = prompt_tokens if prompt_tokens is not None else self.last_prompt_tokens
         if tokens < self.threshold_tokens:
             return False, None
+        from agent.compression_backoff import rearm_after_growth
+        rearm_after_growth(self, tokens)
         if self._automatic_compression_blocked():
             return False, self._compression_block_reason() or "blocked"
         return True, None
