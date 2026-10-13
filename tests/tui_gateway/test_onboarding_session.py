@@ -225,3 +225,41 @@ def test_a_rerun_ends_the_run_it_replaces_so_finishing_the_new_one_closes_the_fl
     onboarding_record.advance(db, new, SkipAll())
     assert onboarding_record.active_session_id(db) is None
     assert read_user_config_raw(root / "config.yaml")["onboarding"]["run"] is False
+
+
+def test_a_rerun_never_writes_the_install_flag_off_and_heals_leftover_open_runs(client, monkeypatch):
+    from hermes_cli import onboarding_run
+    db = server._get_db()
+    for leftover in ("crash-a", "crash-b"):  # two open runs, as a crash mid-rerun could leave
+        db.create_session(leftover, "desktop")
+        onboarding_record.start(db, leftover, FACTS)
+    writes = []
+    real_set_run = onboarding_run.set_run
+    monkeypatch.setattr(onboarding_run, "set_run", lambda value, **kw: (writes.append(value), real_set_run(value, **kw)))
+
+    phase = lambda sid: onboarding_record.load(db, sid)["phase"]
+    assert _call("onboarding.start")["result"]["stored_session_id"] == "crash-b"
+    assert (phase("crash-a"), phase("crash-b")) == ("skipped", "onboarding")
+    new = _call("onboarding.start", {"rerun": True})["result"]["stored_session_id"]
+
+    assert (phase("crash-b"), phase(new)) == ("skipped", "onboarding") and False not in writes
+
+
+def test_a_rerun_closes_the_card_waiting_in_the_chat_it_replaces(client, monkeypatch):
+    old = _call("onboarding.start")["result"]["stored_session_id"]
+    db = server._get_db()
+    sid, frames, events = "ui-old", [], []
+    monkeypatch.setitem(server._sessions, sid, {"session_key": old, "agent": _agent(db, old), "source": "desktop"})
+    monkeypatch.setattr(server_requests, "_answerable", lambda _sid: True)
+    monkeypatch.setattr(server_requests, "_write", frames.append)
+    monkeypatch.setattr(server_requests, "_emit", lambda kind, _sid, payload: events.append((kind, payload)))
+    reply = []
+    waiter = threading.Thread(target=lambda: reply.append(server._setup_beat_request(
+        sid, {"beat": "theme", "card": {"picker": "accent"}})), daemon=True)
+    waiter.start()
+    from tests.waiting import wait_until
+    wait_until(lambda: server_requests.pending_kind(sid) == "setup_beat")
+
+    _call("onboarding.start", {"rerun": True})
+    waiter.join(timeout=5)
+    assert reply == [None] and events[0][0] == "request.cancel"

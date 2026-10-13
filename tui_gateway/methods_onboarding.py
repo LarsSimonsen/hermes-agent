@@ -92,7 +92,7 @@ def _active_onboarding_session() -> str | None:
 def _(rid, params: dict) -> dict:
     from agent.onboarding_facts import read_facts
     from agent.onboarding_flow import Facts, SkipAll
-    from agent.onboarding_record import active_session_id, advance, load, start
+    from agent.onboarding_record import advance, load, open_session_ids, start
     from agent.onboarding_text import CHAT_TITLE, opening_prompt
     # Held through the opening submit: two windows pressing start at once get one chat and one opening.
     with _onboarding_start_lock:
@@ -100,12 +100,8 @@ def _(rid, params: dict) -> dict:
             with _profile_db(_ONBOARDING_PROFILE, writer=True) as db:
                 if db is None:
                     return _db_unavailable_error(rid, code=5000)
-                stored = active_session_id(db)
-                if stored is not None and params.get("rerun"):
-                    # One open run at a time: a rerun ends the one it replaces, so finishing the new
-                    # run closes the install flag and the abandoned chat never reopens.
-                    advance(db, stored, SkipAll())
-                    stored = None
+                open_ids = open_session_ids(db)
+                stored = None if params.get("rerun") else next(iter(open_ids), None)
                 created = stored is None
                 if created:
                     facts = read_facts(facts_source=params.get("facts_source") or "local", locale=params.get("locale"))
@@ -115,11 +111,17 @@ def _(rid, params: dict) -> dict:
                     start(db, stored, facts)
                 else:
                     facts = Facts.from_stored(load(db, stored)["facts"])
+                # One open run at a time. The kept run is open before the others end, so the install
+                # flag never closes in between; finishing it closes the flag.
+                replaced = [sid for sid in open_ids if sid != stored]
+                for old in replaced:
+                    advance(db, old, SkipAll())
                 # A chat with no messages never got its opening (a restart between start and the first turn).
                 opening = None if (db.get_session(stored) or {}).get("message_count") else opening_prompt(facts)
         except Exception as e:
             logger.exception("onboarding.start failed")
             return _err(rid, 5078, str(e))
+        _withdraw_setup_cards(replaced)
         resumed = _methods["session.resume"](rid, {**_ONBOARDING_PROFILE, "session_id": stored, "source": "desktop"})
         if "error" in resumed:
             return resumed
@@ -149,6 +151,18 @@ def _(rid, params: dict) -> dict:
     # The card that waits returns to setup_beat, which reads the skipped record.
     server_requests.cancel(params["session_id"], "resolved", method="setup_beat")
     return _ok(rid, {"skipped": bool(step.result.get("skipped_all"))})
+
+
+def _withdraw_setup_cards(stored_ids: list[str]) -> None:
+    """Close the card still waiting in a chat whose run just ended; its answer would be refused."""
+    from tui_gateway import server_requests
+    if not stored_ids:
+        return
+    with _sessions_lock:
+        live = [sid for sid, sess in _sessions.items()
+                if (getattr(sess.get("agent"), "session_id", None) or sess.get("session_key")) in stored_ids]
+    for sid in live:
+        server_requests.cancel(sid, "resolved", method="setup_beat")
 
 
 def _setup_beat_request(sid: str, payload: dict) -> dict | None:

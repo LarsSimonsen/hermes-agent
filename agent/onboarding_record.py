@@ -94,17 +94,22 @@ def advance(db, session_id: str, event: Event) -> Step:
     return step
 
 
-def active_session_id(db) -> str | None:
-    """The newest chat whose run is still in progress. Rotation leaves the active copy on the
+def open_session_ids(db) -> list[str]:
+    """The chats whose run is still in progress, newest first. Rotation leaves the active copy on the
     compression parent, so each id is read at its compression tip."""
     tips: set[str] = set()
+    open_ids: list[str] = []
     for sid in db.session_ids_with_model_config_key(KEY):
         tip = db.resolve_resume_session_id(sid) or sid
         if tip not in tips:
             tips.add(tip)
             if is_active(load(db, tip)):
-                return tip
-    return None
+                open_ids.append(tip)
+    return open_ids
+
+
+def active_session_id(db) -> str | None:
+    return next(iter(open_session_ids(db)), None)
 
 
 def observe_tool_result(agent, name: str, args: Mapping[str, Any], result: Any) -> None:
